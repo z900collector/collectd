@@ -36,6 +36,7 @@
 #include <pthread.h>
 
 #include <amqp.h>
+#include <amqp_tcp_socket.h>
 #include <amqp_framing.h>
 
 /* Defines for the delivery mode. I have no idea why they're not defined by the
@@ -80,6 +81,7 @@ struct camqp_config_s
     char   *exchange_type;
     char   *queue;
 
+	amqp_socket_t *socket;
     amqp_connection_state_t connection;
     pthread_mutex_t lock;
 };
@@ -105,16 +107,16 @@ static _Bool      subscriber_threads_running = 1;
  */
 static void camqp_close_connection (camqp_config_t *conf) /* {{{ */
 {
-    int sockfd;
+//    int sockfd;
 
     if ((conf == NULL) || (conf->connection == NULL))
         return;
 
-    sockfd = amqp_get_sockfd (conf->connection);
+//    sockfd = amqp_get_sockfd (conf->connection);
     amqp_channel_close (conf->connection, CAMQP_CHANNEL, AMQP_REPLY_SUCCESS);
     amqp_connection_close (conf->connection, AMQP_REPLY_SUCCESS);
     amqp_destroy_connection (conf->connection);
-    close (sockfd);
+//    close (sockfd);
     conf->connection = NULL;
 } /* }}} void camqp_close_connection */
 
@@ -390,7 +392,6 @@ static int camqp_setup_queue (camqp_config_t *conf) /* {{{ */
 static int camqp_connect (camqp_config_t *conf) /* {{{ */
 {
     amqp_rpc_reply_t reply;
-    int sockfd;
     int status;
 
     if (conf->connection != NULL)
@@ -402,20 +403,17 @@ static int camqp_connect (camqp_config_t *conf) /* {{{ */
         ERROR ("amqp plugin: amqp_new_connection failed.");
         return (ENOMEM);
     }
-
-    sockfd = amqp_open_socket (CONF(conf, host), conf->port);
-    if (sockfd < 0)
+	conf->socket = amqp_tcp_socket_new(conf->connection);
+	status = amqp_socket_open(conf->socket, CONF(conf, host), conf->port);
+    if (!status)
     {
         char errbuf[1024];
-        status = (-1) * sockfd;
-        ERROR ("amqp plugin: amqp_open_socket failed: %s",
+        ERROR ("amqp plugin: amqp_socket_open failed: %s",
                 sstrerror (status, errbuf, sizeof (errbuf)));
         amqp_destroy_connection (conf->connection);
         conf->connection = NULL;
         return (status);
     }
-    amqp_set_sockfd (conf->connection, sockfd);
-
     reply = amqp_login (conf->connection, CONF(conf, vhost),
             /* channel max = */      0,
             /* frame max   = */ 131072,
@@ -427,7 +425,6 @@ static int camqp_connect (camqp_config_t *conf) /* {{{ */
         ERROR ("amqp plugin: amqp_login (vhost = %s, user = %s) failed.",
                 CONF(conf, vhost), CONF(conf, user));
         amqp_destroy_connection (conf->connection);
-        close (sockfd);
         conf->connection = NULL;
         return (1);
     }
@@ -440,7 +437,7 @@ static int camqp_connect (camqp_config_t *conf) /* {{{ */
         ERROR ("amqp plugin: amqp_channel_open failed.");
         amqp_connection_close (conf->connection, AMQP_REPLY_SUCCESS);
         amqp_destroy_connection (conf->connection);
-        close(sockfd);
+//        close(sockfd);
         conf->connection = NULL;
         return (1);
     }
